@@ -79,6 +79,27 @@ public:
         Option<bool> prediction{this, "Prediction", _("联想"), true};
         Option<bool> userSentence{this, "UserSentence", _("用户句子学习"), true};
 
+        // Engine tuning (hot-reloaded via applyConfig). Defaults match the
+        // engine's historical compile-time values. Scales/weight are integer
+        // percentages because fcitx5-config has no double option type.
+        Option<int, IntConstrain> gruPinyinScale{
+            this, "GruPinyinScale", _("GRU 全拼偏置（%）"), 40,
+            IntConstrain(0, 200)};
+        Option<int, IntConstrain> gruT9Scale{
+            this, "GruT9Scale", _("GRU 九键偏置（%）"), 50,
+            IntConstrain(0, 200)};
+        Option<bool> adaptiveGru{this, "AdaptiveGru", _("GRU 自适应偏置"), false};
+        Option<bool> enableFuzzy{this, "EnableFuzzy", _("模糊音纠错"), true};
+        Option<bool> enableTypo{this, "EnableTypo", _("按键纠错"), true};
+        Option<bool> t9Correction{this, "T9Correction", _("九键按键纠错"), false};
+        Option<bool> englishWhitelist{this, "EnglishWhitelist",
+                                      _("英文常用词加成"), true};
+        Option<int, IntConstrain> userWeight{
+            this, "UserWeight", _("用户词权重（%）"), 20, IntConstrain(0, 100)};
+        Option<int, IntConstrain> decayHalfLifeDays{
+            this, "DecayHalfLifeDays", _("用户词衰减半衰期（天，0=不衰减）"), 30,
+            IntConstrain(0, 3650)};
+
         // Preedit
         OptionWithAnnotation<PreeditMode, PreeditModeI18NAnnotation> preeditMode{
             this, "PreeditMode", _("预编辑模式"), PreeditMode::ComposingPinyin};

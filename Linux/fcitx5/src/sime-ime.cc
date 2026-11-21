@@ -157,6 +157,16 @@ void Sime::reloadConfig() {
 void Sime::applyConfig() {
     if (sime_) {
         sime_->SetUserSentenceEnabled(*config_.userSentence);
+        // Integer-percent options → engine doubles (IntConstrain bounds range).
+        sime_->SetGruScales(*config_.gruPinyinScale / 100.0,
+                            *config_.gruT9Scale / 100.0);
+        sime_->SetAdaptiveGruEnabled(*config_.adaptiveGru);
+        sime_->SetCorrectionEnabled(*config_.enableFuzzy, *config_.enableTypo);
+        sime_->SetT9CorrectionEnabled(*config_.t9Correction);
+        sime_->SetEnglishWhitelistEnabled(*config_.englishWhitelist);
+        // SetWeight clamps to [0,1]; SetDecayHalfLife rebuilds decay (0 disables).
+        sime_->MutableUserSentence().SetWeight(*config_.userWeight / 100.0);
+        sime_->MutableUserSentence().SetDecayHalfLife(*config_.decayHalfLifeDays);
     }
 }
 
@@ -171,7 +181,7 @@ void Sime::initSime() {
         sime_.reset();
     } else {
         sime_->LoadUserSentence(userSentencePath());
-        sime_->SetUserSentenceEnabled(*config_.userSentence);
+        applyConfig();
         FCITX_INFO() << "Sime: resources loaded, GRU="
                      << (sime_->GruReady() ? "ready" : "disabled");
     }
