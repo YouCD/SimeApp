@@ -94,6 +94,8 @@ public:
         Option<bool> t9Correction{this, "T9Correction", _("九键按键纠错"), false};
         Option<bool> englishWhitelist{this, "EnglishWhitelist",
                                       _("英文常用词加成"), true};
+        Option<bool> englishPunctuation{this, "EnglishPunctuation",
+                                        _("英文标点"), false};
         Option<int, IntConstrain> userWeight{
             this, "UserWeight", _("用户词权重（%）"), 20, IntConstrain(0, 100)};
         Option<int, IntConstrain> decayHalfLifeDays{
@@ -136,6 +138,10 @@ public:
             this, "CommitRawInput", _("提交原始输入"),
             {Key("Return"), Key("KP_Enter")},
             KeyListConstrain({KeyConstrainFlag::AllowModifierLess})};
+        KeyListOption togglePunctuation{
+            this, "TogglePunctuation", _("切换中英标点"),
+            {Key("Control+period")},
+            KeyListConstrain({KeyConstrainFlag::AllowModifierLess})};
 
         const char *typeName() const override { return "SimeConfig"; }
     };
@@ -160,6 +166,11 @@ private:
     // bounds the data loss to ≤threshold most-recent commits.
     std::size_t pending_user_sentence_saves_ = 0;
     static constexpr std::size_t kUserSentenceFlushThreshold = 8;
+
+    // english_punc_: ASCII punctuation in Chinese mode (Ctrl+. toggles).
+    // Pure-English switching itself is handled by fcitx5 core AltTriggerKeys
+    // (Shift_L), not by the engine.
+    bool english_punc_ = false;
 
     FCITX_ADDON_DEPENDENCY_LOADER(fullwidth, instance_->addonManager());
     FCITX_ADDON_DEPENDENCY_LOADER(chttrans, instance_->addonManager());

@@ -22,6 +22,22 @@ namespace {
 constexpr int kPageSize = 9;
 constexpr const char *kUserSentencePath = "sime/sentences.txt";
 
+// True when the word is ASCII letters/digits (an English command/word such
+// as "ps"/"git"), so prediction should stay in English and surface options
+// like "aux" instead of Chinese punctuation.
+bool isEnglishWord(const std::string &word) {
+    bool hasLetter = false;
+    for (unsigned char c : word) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            hasLetter = true;
+        } else if (!((c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                     c == '.')) {
+            return false;
+        }
+    }
+    return hasLetter;
+}
+
 const KeyList &selectionKeys() {
     static const KeyList keys = Key::keyListFromString("1 2 3 4 5 6 7 8 9");
     return keys;
@@ -50,7 +66,21 @@ std::vector<sime::TokenID> decodeContext(const SimeState *st) {
     return context;
 }
 
-std::string punctuationOutput(uint32_t chr, SimeState *st) {
+std::string punctuationOutput(uint32_t chr, SimeState *st, bool english) {
+    if (english) {
+        // English-punctuation mode: emit the ASCII char unchanged for every
+        // symbol we would otherwise convert to a full-width Chinese form.
+        switch (chr) {
+        case ',': case '.': case '?': case '!': case ';': case ':':
+        case '\\': case '(': case ')': case '<': case '>': case '[':
+        case ']': case '{': case '}': case '$': case '^': case '_':
+        case '@': case '#': case '&': case '~':
+            return std::string(1, static_cast<char>(chr));
+        case '"': return "\"";
+        case '\'': return "'";
+        default: return {};
+        }
+    }
     switch (chr) {
     case ',': return "，";
     case '.': return "。";
@@ -125,9 +155,18 @@ public:
     void select(InputContext *ic) const override {
         auto *st = ic->propertyFor(engine_->stateFactory());
         int maxCtx = engine_->contextSize();
+        // English command/word predictions need a separating space so
+        // "ps" + "aux" commits as "ps aux", not "psaux". A dash flag also
+        // gets a leading space ("ls" + "-" -> "ls -"), while the flag word
+        // after the dash attaches tightly ("-" + "la" -> "-la"). Chinese
+        // word predictions and punctuation attach without a space.
+        const bool needSpace =
+            !text_.empty() && text_.front() != ' ' &&
+            !st->context.empty() && isEnglishWord(st->context.back()) &&
+            (isEnglishWord(text_) || text_.front() == '-');
         engine_->learnUserSentence(ic, tokens_);
         st->pushContext(text_, tokens_, maxCtx);
-        ic->commitString(text_);
+        ic->commitString(needSpace ? " " + text_ : text_);
         engine_->showPredictions(ic);
     }
 
@@ -155,6 +194,7 @@ void Sime::reloadConfig() {
 }
 
 void Sime::applyConfig() {
+    english_punc_ = *config_.englishPunctuation;
     if (sime_) {
         sime_->SetUserSentenceEnabled(*config_.userSentence);
         // Integer-percent options → engine doubles (IntConstrain bounds range).
@@ -337,8 +377,43 @@ void Sime::showPredictions(InputContext *ic) {
         return;
     }
 
-    auto results = sime_->NextTokens(st->context_ids,
-        static_cast<std::size_t>(kPageSize));
+    std::vector<sime::DecodeResult> results;
+    if (isEnglishWord(st->context.back())) {
+        // English command: surface bare options/subcommands (aux, clone, ...)
+        // plus dash flags combined into "-la"/"-ef" so they show directly
+        // after the command instead of a bare "-" needing a second pick.
+        results = sime_->NextTokens(st->context_ids,
+            static_cast<std::size_t>(kPageSize), true);
+        auto mixed = sime_->NextTokens(st->context_ids,
+            static_cast<std::size_t>(kPageSize) * 2, false);
+        sime::TokenID dash = 0;
+        for (const auto &r : mixed) {
+            if (r.text == "-" && !r.tokens.empty()) {
+                dash = r.tokens.front();
+                break;
+            }
+        }
+        if (dash != 0) {
+            auto flagCtx = st->context_ids;
+            flagCtx.push_back(dash);
+            auto flags = sime_->NextTokens(flagCtx,
+                static_cast<std::size_t>(kPageSize), false);
+            for (const auto &r : flags) {
+                if (!isEnglishWord(r.text)) continue;
+                sime::DecodeResult c;
+                c.text = "-" + r.text;
+                c.tokens = r.tokens;
+                c.tokens.insert(c.tokens.begin(), dash);
+                results.push_back(std::move(c));
+            }
+        }
+        if (results.size() > static_cast<std::size_t>(kPageSize)) {
+            results.resize(static_cast<std::size_t>(kPageSize));
+        }
+    } else {
+        results = sime_->NextTokens(st->context_ids,
+            static_cast<std::size_t>(kPageSize), false);
+    }
 
     if (results.empty()) {
         st->predicting = false;
@@ -505,11 +580,22 @@ void Sime::updateUI(InputContext *ic) {
 }
 
 void Sime::keyEvent(const InputMethodEntry &, KeyEvent &event) {
-    if (event.isRelease()) return;
-
     auto *ic = event.inputContext();
     auto *st = state(ic);
     auto key = event.key();
+
+    // Shift-alone Chinese/English switching is handled by fcitx5 core
+    // (Hotkey/AltTriggerKeys=Shift_L), which toggles to the keyboard layout
+    // for pure English — the same mechanism Rime uses. The engine must not
+    // intercept Shift here, or it fights the core toggle.
+    if (event.isRelease()) return;
+
+    // Chinese/English punctuation toggle hotkey (Ctrl+. by default).
+    if (key.checkKeyList(*config_.togglePunctuation)) {
+        english_punc_ = !english_punc_;
+        event.filterAndAccept();
+        return;
+    }
 
     // Save and clear punctuation undo state
     bool lastIsPunc = st->lastIsPunc;
@@ -741,7 +827,7 @@ void Sime::keyEvent(const InputMethodEntry &, KeyEvent &event) {
     // Chinese punctuation.
     if (!key.hasModifier() && !key.isKeyPad()) {
         auto chr = Key::keySymToUnicode(key.sym());
-        if (auto punc = punctuationOutput(chr, st); !punc.empty()) {
+        if (auto punc = punctuationOutput(chr, st, english_punc_); !punc.empty()) {
             // Auto-select first candidate if composing
             if (!st->empty() && cl && cl->size() > 0) {
                 cl->candidate(0).select(ic);
