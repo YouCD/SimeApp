@@ -90,8 +90,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/icon/sime.svg")
     install(FILES data/icon/sime.svg
             DESTINATION "${FCITX5_PREFIX}/share/icons/hicolor/scalable/apps")
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/icon/sime-en.svg")
+    install(FILES data/icon/sime-en.svg
+            DESTINATION "${FCITX5_PREFIX}/share/icons/hicolor/scalable/apps")
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/icon/sime.png")
     install(FILES data/icon/sime.png
+            DESTINATION "${FCITX5_DATA_INSTALL_DIR}/inputmethod")
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/icon/sime-en.png")
+    install(FILES data/icon/sime-en.png
             DESTINATION "${FCITX5_DATA_INSTALL_DIR}/inputmethod")
 endif()
 

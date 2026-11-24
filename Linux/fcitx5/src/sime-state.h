@@ -67,6 +67,8 @@ public:
         buffer.clear();
         cursor = 0;
         selections.clear();
+        shiftDown = false;
+        keyAfterShift = false;
     }
 
     bool empty() const { return buffer.empty(); }
@@ -104,6 +106,11 @@ public:
         doubleQuoteOpen = true;
         singleQuoteOpen = true;
     }
+
+    // Shift-tap tracking (see Sime::keyEvent). Per-IC because it tracks the
+    // physical shift press of the focused context.
+    bool shiftDown = false;
+    bool keyAfterShift = false;
 };
 
 } // namespace fcitx

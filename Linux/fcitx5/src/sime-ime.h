@@ -55,6 +55,12 @@ public:
         return result;
     }
 
+    // Sub-mode icon/label so the tray reflects the in-engine English mode.
+    std::string subModeIconImpl(const InputMethodEntry &entry,
+                                InputContext &ic) override;
+    std::string subModeLabelImpl(const InputMethodEntry &entry,
+                                 InputContext &ic) override;
+
     // Called by SimeCandidateWord on selection
     void selectCandidate(InputContext *ic, const std::string& text,
                          const std::string& pinyin,
@@ -65,6 +71,9 @@ public:
     void showPredictions(InputContext *ic);
     void learnUserSentence(InputContext *ic,
                            const std::vector<sime::TokenID> &tokens);
+    // Commit any composing buffer and toggle English mode (direct ASCII
+    // input). Invoked on a Shift-alone tap from keyEvent.
+    void toggleEnglishMode(InputContext *ic, SimeState *st);
     // Persists the in-memory user-sentence dictionary if there are
     // accumulated changes since the last save. Called from deactivate
     // and from learnUserSentence once the dirty counter crosses
@@ -168,9 +177,15 @@ private:
     static constexpr std::size_t kUserSentenceFlushThreshold = 8;
 
     // english_punc_: ASCII punctuation in Chinese mode (Ctrl+. toggles).
-    // Pure-English switching itself is handled by fcitx5 core AltTriggerKeys
-    // (Shift_L), not by the engine.
+    // Pure-English input is an in-engine mode toggled by a Shift-alone tap
+    // (see toggleEnglishMode); it does not depend on the fcitx5 core
+    // AltTriggerKeys, which only fires when the group has another IM.
     bool english_punc_ = false;
+
+    // English mode: printable ASCII commits directly, no pinyin decode.
+    // Per-IME (global), matching the macOS frontend and consistent with
+    // english_punc_, so it persists across focus changes.
+    bool englishMode_ = false;
 
     FCITX_ADDON_DEPENDENCY_LOADER(fullwidth, instance_->addonManager());
     FCITX_ADDON_DEPENDENCY_LOADER(chttrans, instance_->addonManager());

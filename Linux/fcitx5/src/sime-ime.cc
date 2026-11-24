@@ -117,6 +117,60 @@ std::string punctuationOutput(uint32_t chr, SimeState *st, bool english) {
     default: return {};
     }
 }
+
+// Printable ASCII for the key in English mode, with Shift applied. Letters
+// are uppercased by Key::normalize() (isUAZ). For digits and punctuation the
+// common US-layout Shift combinations are mapped explicitly, since
+// keySymToUnicode ignores the Shift state. Returns 0 when the key produces
+// no printable ASCII (modifier combos, cursor keys, ...).
+uint32_t englishModeChar(const Key &key) {
+    // Ctrl/Alt/Super combos are commands (e.g. Ctrl+A), not characters —
+    // let them fall through to normal handling.
+    if (key.states().test(KeyState::Ctrl) ||
+        key.states().test(KeyState::Alt) ||
+        key.states().test(KeyState::Super)) {
+        return 0;
+    }
+    if (key.isLAZ() || key.isUAZ()) {
+        return static_cast<uint32_t>(key.sym());
+    }
+    if (key.hasModifier()) {
+        // Only a bare Shift remaps digits/punctuation (Ctrl/Alt/Super
+        // already excluded above).
+        if (key.states().test(KeyState::Shift)) {
+            switch (key.sym()) {
+            case FcitxKey_1: return '!';
+            case FcitxKey_2: return '@';
+            case FcitxKey_3: return '#';
+            case FcitxKey_4: return '$';
+            case FcitxKey_5: return '%';
+            case FcitxKey_6: return '^';
+            case FcitxKey_7: return '&';
+            case FcitxKey_8: return '*';
+            case FcitxKey_9: return '(';
+            case FcitxKey_0: return ')';
+            case FcitxKey_minus: return '_';
+            case FcitxKey_equal: return '+';
+            case FcitxKey_bracketleft: return '{';
+            case FcitxKey_bracketright: return '}';
+            case FcitxKey_semicolon: return ':';
+            case FcitxKey_apostrophe: return '"';
+            case FcitxKey_comma: return '<';
+            case FcitxKey_period: return '>';
+            case FcitxKey_slash: return '?';
+            case FcitxKey_backslash: return '|';
+            case FcitxKey_grave: return '~';
+            default: return 0;
+            }
+        }
+        return 0;
+    }
+    auto chr = Key::keySymToUnicode(key.sym());
+    if (chr >= 0x20 && chr <= 0x7E) {
+        return chr;
+    }
+    return 0;
+}
 }  // namespace
 
 // ===== Candidate word =====
@@ -365,6 +419,40 @@ void Sime::flushUserSentence() {
     pending_user_sentence_saves_ = 0;
 }
 
+void Sime::toggleEnglishMode(InputContext *ic, SimeState *st) {
+    // Commit any composing buffer (selected + top decode of remaining),
+    // matching the macOS frontend's commitOrClear, so no half-composed
+    // pinyin is stranded when the mode flips.
+    if (!st->empty()) {
+        ic->commitString(commitText(ic));
+        st->reset();
+    }
+    st->predicting = false;
+    englishMode_ = !englishMode_;
+    auto &panel = ic->inputPanel();
+    panel.reset();
+    ic->updatePreedit();
+    ic->updateUserInterface(UserInterfaceComponent::InputPanel);
+    // Refresh the tray / im-switcher icon + label for the new mode.
+    ic->updateUserInterface(UserInterfaceComponent::StatusArea);
+}
+
+std::string Sime::subModeIconImpl(const InputMethodEntry &entry,
+                                  InputContext &ic) {
+    FCITX_UNUSED(entry);
+    FCITX_UNUSED(ic);
+    // English mode shows the "A" icon; Chinese mode falls back to the
+    // default "sime" icon from the input method config.
+    return englishMode_ ? "sime-en" : std::string();
+}
+
+std::string Sime::subModeLabelImpl(const InputMethodEntry &entry,
+                                   InputContext &ic) {
+    FCITX_UNUSED(entry);
+    FCITX_UNUSED(ic);
+    return englishMode_ ? "A" : std::string();
+}
+
 void Sime::showPredictions(InputContext *ic) {
     auto *st = state(ic);
     auto &panel = ic->inputPanel();
@@ -584,11 +672,53 @@ void Sime::keyEvent(const InputMethodEntry &, KeyEvent &event) {
     auto *st = state(ic);
     auto key = event.key();
 
-    // Shift-alone Chinese/English switching is handled by fcitx5 core
-    // (Hotkey/AltTriggerKeys=Shift_L), which toggles to the keyboard layout
-    // for pure English — the same mechanism Rime uses. The engine must not
-    // intercept Shift here, or it fights the core toggle.
+    // Shift-alone tap (press + release with no other key in between)
+    // toggles English mode, matching the macOS frontend. When the input
+    // method group has another IM (e.g. a keyboard layout), the fcitx5
+    // core's AltTriggerKeys (default Shift_L) intercepts bare Shift and
+    // switches input methods instead — it filters the key, so we never
+    // see it and there is no conflict. Shift_R is always free for the
+    // in-engine toggle.
+    if (key.isModifier() &&
+        (key.check(FcitxKey_Shift_L) || key.check(FcitxKey_Shift_R))) {
+        if (event.isRelease()) {
+            if (st->shiftDown && !st->keyAfterShift) {
+                toggleEnglishMode(ic, st);
+            }
+            st->shiftDown = false;
+            st->keyAfterShift = false;
+        } else {
+            st->shiftDown = true;
+            st->keyAfterShift = false;
+        }
+        event.filterAndAccept();
+        return;
+    }
+
     if (event.isRelease()) return;
+
+    // A real key was pressed during the shift press — disqualify the tap.
+    if (st->shiftDown) {
+        st->keyAfterShift = true;
+    }
+
+    // English mode: printable ASCII commits directly, no pinyin decode
+    // (letters keep case; digits/punctuation use the US Shift mapping).
+    // Non-ASCII keys fall through to normal handling.
+    if (englishMode_) {
+        auto chr = englishModeChar(key);
+        if (chr) {
+            // Flush any composing buffer first (defensive; the buffer is
+            // already committed when entering English mode).
+            if (!st->empty()) {
+                ic->commitString(commitText(ic));
+                st->reset();
+            }
+            ic->commitString(std::string(1, static_cast<char>(chr)));
+            event.filterAndAccept();
+            return;
+        }
+    }
 
     // Chinese/English punctuation toggle hotkey (Ctrl+. by default).
     if (key.checkKeyList(*config_.togglePunctuation)) {
